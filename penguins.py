@@ -18,14 +18,21 @@ class PenguinClusters:
         '''
         gamma = 1
         Dt = 3e-5
+        wind_strength = 1
 
-        force, particle_field = self.force_field(pos)
+        temp_force, particle_field, diff_vectors = self.force_field(pos)
+        covering_factor = self.total_covered_fraction(pos, diff_vectors)
+
+        wind_force = np.zeros_like(temp_force)
+        wind_force[:,0] = (1-covering_factor) * wind_strength
+
         noise = np.random.normal(loc=0, scale=np.sqrt(2*timestep*Dt), size=pos.shape)
-        new_pos = (pos + timestep / gamma * force + noise) % self.boxsize
+
+        new_pos = (pos + timestep / gamma * (temp_force + wind_force) + noise) % self.boxsize
 
         return new_pos, particle_field
 
-    def force_field(self, pos:np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def force_field(self, pos:np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         ''' Calculate the force on each particle given the current position of all particles.
             Returns array of shape (num_particles, ndim) for the forces and the particles' field values array of shape (num_particles,).
         '''
@@ -40,7 +47,45 @@ class PenguinClusters:
             force[:,dim] = - lamb * (np.sum(A*np.exp(-kappa*nearest_dists_inf)/nearest_dists_inf, axis=1) - self.optimal_temp) * \
                             np.sum( -A*np.exp(-kappa*nearest_dists_inf)*(kappa*nearest_dists + 1)*diff_vectors[:,:,dim] / nearest_dists_inf**3 , axis=1)
         particle_field = np.sum(A*np.exp(-kappa*nearest_dists_inf)/nearest_dists_inf, axis=1)
-        return force, particle_field
+        return force, particle_field, diff_vectors
+
+    def covered_fraction(self, upwind_particles:np.ndarray, particle_radius:float) -> tuple[float, float]:
+        ''' Find the particle that covers the most and compute the coverage fraction of this particle.
+            Returns coverage fraction and the corresponding most covering value.
+        '''
+        most_covering_idx = np.argmin(np.abs(upwind_particles[:,1]))
+        most_covering_value = upwind_particles[most_covering_idx,1]
+        fraction = ( 2*particle_radius-np.abs(most_covering_value) ) / (2*particle_radius)
+        return fraction, most_covering_value
+
+    def total_covered_fraction(self, pos:np.ndarray, diff_vectors:np.ndarray) -> np.ndarray:
+        ''' Compute the total coverage fraction of all particles. To this end the upwind particles are masked (those that are positioned left
+            of the considered particle, where their radius is taken into account), then the particle that most covers the given particle is taken
+            and its covering fraction is computed, after which the second most covering particle, at the other side of the wind stream, is used to
+            get to the total coverage fraction.
+            Returns array of shape (num_particles) for the covered fraction per particle
+        '''
+        particle_radius = 0.2
+        fraction = np.zeros((pos.shape[0]))
+        for particle in range(diff_vectors.shape[0]):
+            upwind_mask = (diff_vectors[particle,:,0] > 0) & (diff_vectors[particle,:,1] < 2*particle_radius) & (diff_vectors[particle,:,1] > -2*particle_radius)
+            upwind_particles = diff_vectors[particle, upwind_mask]
+
+            if (len(upwind_particles!=0)):
+                fraction[particle], most_covering_value = self.covered_fraction(upwind_particles, particle_radius)
+
+                if (most_covering_value == 0):
+                    continue
+                elif (most_covering_value > 0):
+                    other_upwind_particles = upwind_particles[(upwind_particles[:,1] < 0)] 
+                elif (most_covering_value < 0):
+                    other_upwind_particles = upwind_particles[(upwind_particles[:,1] > 0)]
+
+                if (len(other_upwind_particles!=0)):
+                    fraction[particle] += self.covered_fraction(other_upwind_particles, particle_radius)[0]
+                    if fraction[particle] > 1:
+                        fraction[particle] = 1
+        return fraction
 
     def nearest_dist(self, pos:np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         ''' Calculate the distance between all particles both as vector and length.
@@ -68,12 +113,14 @@ class PenguinClusters:
             total_positions[i, :] = positions
             particle_fields[i, :] = particle_field
 
-        return total_positions, particle_fields
+        return total_positions, particle_fields, self.boxsize
     
-def plot_positions_and_fields(total_positions:np.ndarray, particle_fields:np.ndarray, optimal_temp:float):
+def plot_positions_and_fields(total_positions:np.ndarray, particle_fields:np.ndarray, optimal_temp:float, boxsize:float):
     fig, ax = plt.subplots(figsize=(5,5))
-    ax.scatter(total_positions[-1,:,0], total_positions[-1,:,1], c=particle_fields[-1,:] - optimal_temp, cmap='viridis', alpha=0.5, s=10)
-    cbar = plt.colorbar(plt.cm.ScalarMappable(cmap='viridis'))
+    sc = ax.scatter(total_positions[-1,:,0], total_positions[-1,:,1], c=particle_fields[-1,:] - optimal_temp, cmap='viridis', alpha=1, s=10)
+    ax.set(xlim=(0, boxsize), ylim=(0, boxsize))
+    ax.set_aspect('equal')
+    cbar = plt.colorbar(sc)
     cbar.set_label('T - T$_{opt}$')
     plt.show()
 
@@ -81,10 +128,10 @@ def main():
     num_steps = 10**4
     rho = 1.3
 
-    penguin_sim = PenguinClusters(num_particles=256, num_dim=2, rho=rho, optimal_temp=6)
-    total_positions, particle_fields = penguin_sim.run_simulation(num_steps=num_steps, timestep=1e-4)
+    penguin_sim = PenguinClusters(num_particles=100, num_dim=2, rho=rho, optimal_temp=6)
+    total_positions, particle_fields, boxsize = penguin_sim.run_simulation(num_steps=num_steps, timestep=1e-4)
 
-    plot_positions_and_fields(total_positions, particle_fields, optimal_temp=penguin_sim.optimal_temp)
+    plot_positions_and_fields(total_positions, particle_fields, penguin_sim.optimal_temp, boxsize)
 
     #TODO: when is the system in equilibrium? (plot the average particle field over time)
 
