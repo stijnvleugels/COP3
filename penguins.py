@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 from tqdm import tqdm
 
 class PenguinClusters:
@@ -18,7 +19,7 @@ class PenguinClusters:
         '''
         gamma = 1
         Dt = 3e-5
-        wind_strength = 1
+        wind_strength = 4
 
         temp_force, particle_field, diff_vectors = self.force_field(pos)
         covering_factor = self.total_covered_fraction(pos, diff_vectors)
@@ -113,27 +114,40 @@ class PenguinClusters:
             total_positions[i, :] = positions
             particle_fields[i, :] = particle_field
 
-        return total_positions, particle_fields, self.boxsize
+        return total_positions, particle_fields
     
-def plot_positions_and_fields(total_positions:np.ndarray, particle_fields:np.ndarray, optimal_temp:float, boxsize:float):
+def plot_positions_and_fields(total_positions:np.ndarray, particle_fields:np.ndarray, optimal_temp:float) -> None:
+    def update(frame):
+        sc.set_offsets(total_positions[frame,:,0:2])
+        sc.set_array(particle_fields[frame,:] - optimal_temp)
+        text.set_text(f'Time: {frame}')
+        return sc, text,
+
+    # plot positions as function of time in a video
     fig, ax = plt.subplots(figsize=(5,5))
-    sc = ax.scatter(total_positions[-1,:,0], total_positions[-1,:,1], c=particle_fields[-1,:] - optimal_temp, cmap='viridis', alpha=1, s=10)
-    ax.set(xlim=(0, boxsize), ylim=(0, boxsize))
-    ax.set_aspect('equal')
+    sc = ax.scatter(total_positions[0,:,0], total_positions[0,:,1], c= particle_fields[0,:] - optimal_temp, cmap='viridis', s=10, vmin=-1, vmax=1)
+    text = ax.text(s='', x=0.5, y=1.05, ha='center', va='center', transform=ax.transAxes)
     cbar = plt.colorbar(sc)
     cbar.set_label('T - T$_{opt}$')
+    # every 25th frame for the first 1000 frames, then every 100th frame
+    frames_to_show = np.concatenate([np.arange(0, 1000, 25), np.arange(1000, total_positions.shape[0], 100)])
+    ani = FuncAnimation(fig, update, frames=frames_to_show)
+    ani.save('penguin_clusters.gif', writer='pillow', fps=5)
     plt.show()
 
 def main():
     num_steps = 10**4
-    rho = 1.3
+    timestep = 1e-4
+    timestep = 5e-4
 
-    penguin_sim = PenguinClusters(num_particles=100, num_dim=2, rho=rho, optimal_temp=6)
-    total_positions, particle_fields, boxsize = penguin_sim.run_simulation(num_steps=num_steps, timestep=1e-4)
+    penguin_sim = PenguinClusters(num_particles=150, num_dim=2, rho=1, optimal_temp=15)
+    total_positions, particle_fields = penguin_sim.run_simulation(num_steps=num_steps, timestep=timestep)
 
-    plot_positions_and_fields(total_positions, particle_fields, penguin_sim.optimal_temp, boxsize)
+    plot_positions_and_fields(total_positions, particle_fields, penguin_sim.optimal_temp)
 
-    #TODO: when is the system in equilibrium? (plot the average particle field over time)
+    #TODO: 
+    # - when is the system in equilibrium? (plot the average particle field over time) from this point we can measure variables??
+    # - initialisation of the positions is random, but would be more useful to already throw in group structure?
 
 if __name__ == '__main__':
     main()
