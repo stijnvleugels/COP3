@@ -12,6 +12,15 @@ class PenguinClusters:
         self.optimal_temp = optimal_temp
         self.boxsize = np.sqrt(num_particles/rho)
 
+    def init_positions(self) -> np.ndarray:
+        ''' Initialize the positions of the particles in the box in four clusters.
+        '''
+        cluster1 = np.random.rand(self.num_particles//4, self.num_dim) * self.boxsize / 8 + np.array([self.boxsize/4, self.boxsize/4])
+        cluster2 = np.random.rand(self.num_particles//4, self.num_dim) * self.boxsize / 8 + np.array([self.boxsize/4, self.boxsize/4]) + np.array([self.boxsize/2, self.boxsize/2])
+        cluster3 = np.random.rand(self.num_particles//4, self.num_dim) * self.boxsize / 8 + np.array([self.boxsize/4, self.boxsize/4]) + np.array([self.boxsize/2, 0])
+        cluster4 = np.random.rand(self.num_particles//4, self.num_dim) * self.boxsize / 8 + np.array([self.boxsize/4, self.boxsize/4]) + np.array([0, self.boxsize/2])
+        return np.concatenate([cluster1, cluster2, cluster3, cluster4])
+
     def next_timestep(self, pos:np.ndarray, timestep:float) -> np.ndarray:
         ''' Calculate the next position of the particles given the current position.
             - `pos` must be (num_particles, ndim) of positions
@@ -19,13 +28,14 @@ class PenguinClusters:
         '''
         gamma = 1
         Dt = 3e-5
-        wind_strength = 4
+        wind_strength = 0
 
         temp_force, particle_field, diff_vectors = self.force_field(pos)
-        covering_factor = self.total_covered_fraction(pos, diff_vectors)
+        # covering_factor = self.total_covered_fraction(pos, diff_vectors)
 
-        wind_force = np.zeros_like(temp_force)
-        wind_force[:,0] = (1-covering_factor) * wind_strength
+        # wind_force = np.zeros(temp_force.shape)
+        # wind_force[:,0] = (1-covering_factor) * wind_strength
+        wind_force = np.zeros(temp_force.shape)
 
         noise = np.random.normal(loc=0, scale=np.sqrt(2*timestep*Dt), size=pos.shape)
 
@@ -46,8 +56,8 @@ class PenguinClusters:
         
         for dim in range(force.shape[1]):
             force[:,dim] = - lamb * (np.sum(A*np.exp(-kappa*nearest_dists_inf)/nearest_dists_inf, axis=1) - self.optimal_temp) * \
-                            np.sum( -A*np.exp(-kappa*nearest_dists_inf)*(kappa*nearest_dists + 1)*diff_vectors[:,:,dim] / nearest_dists_inf**3 , axis=1)
-        particle_field = np.sum(A*np.exp(-kappa*nearest_dists_inf)/nearest_dists_inf, axis=1)
+                            np.sum( -A*np.exp(-kappa*nearest_dists_inf)*(kappa*nearest_dists + 1)*diff_vectors[:,:,dim] / nearest_dists_inf**3 , axis=1) 
+        particle_field = np.sum(A*np.exp(-kappa*nearest_dists_inf)/nearest_dists_inf, axis=1) 
         return force, particle_field, diff_vectors
 
     def covered_fraction(self, upwind_particles:np.ndarray, particle_radius:float) -> tuple[float, float]:
@@ -103,12 +113,36 @@ class PenguinClusters:
         nearest_dists[:,:] = np.linalg.norm(diff_vectors[:,:,:], axis=2)
         return nearest_dists, diff_vectors
     
+    def equilibrate(self, pos:np.ndarray, timestep:float) -> tuple[np.ndarray, np.ndarray]:
+        ''' Equilibrate the system by running the simulation until the slope has sufficiently flattened and return the positions and particle field values at the end.
+        '''
+        num_steps = 10**5
+        slope_check_interval = num_steps // 100
+        particle_fields = np.zeros([slope_check_interval])
+        old_slope = 0
+
+        for i in range(num_steps):
+            pos, particle_field = self.next_timestep(pos, timestep=timestep)
+            particle_fields[i % slope_check_interval] = np.mean(particle_field)
+            if i % slope_check_interval == 0:
+                new_slope = np.median(np.abs(np.diff(particle_fields)))
+                if np.abs(new_slope - old_slope) < 1e-4 and i > 0:
+                    print(f'Equilibrated at timestep {i}, slope is {new_slope}')
+                    return pos
+                particle_fields = np.zeros([slope_check_interval])
+                old_slope = new_slope
+        print('Equilibration not reached, returning last positions')
+        return pos
+
     def run_simulation(self, num_steps:int, timestep:float) -> tuple[np.ndarray, np.ndarray]:
         ''' Run the simulation for a number of steps and return the positions and particle field values at each timestep.
         '''
         total_positions = np.zeros([num_steps, self.num_particles, self.num_dim])
         particle_fields = np.zeros([num_steps, self.num_particles])
         positions = np.random.rand(self.num_particles, self.num_dim) * self.boxsize
+        # positions = self.init_positions()
+        # positions = self.equilibrate(positions, timestep=timestep)
+
         for i in tqdm(range(num_steps)):
             positions, particle_field = self.next_timestep(positions, timestep=timestep)
             total_positions[i, :] = positions
@@ -116,38 +150,62 @@ class PenguinClusters:
 
         return total_positions, particle_fields
     
-def plot_positions_and_fields(total_positions:np.ndarray, particle_fields:np.ndarray, optimal_temp:float) -> None:
+    
+def plot_positions_and_fields(total_positions:np.ndarray, particle_fields:np.ndarray, optimal_temp:float, filename:str, Tjit:bool=False) -> None:
     def update(frame):
         sc.set_offsets(total_positions[frame,:,0:2])
-        sc.set_array(particle_fields[frame,:] - optimal_temp)
+        if not Tjit:
+            sc.set_array(particle_fields[frame,:] - optimal_temp)
         text.set_text(f'Time: {frame}')
         return sc, text,
 
     # plot positions as function of time in a video
     fig, ax = plt.subplots(figsize=(5,5))
-    sc = ax.scatter(total_positions[0,:,0], total_positions[0,:,1], c= particle_fields[0,:] - optimal_temp, cmap='viridis', s=10, vmin=-1, vmax=1)
+    if not Tjit:
+        sc = ax.scatter(total_positions[0,:,0], total_positions[0,:,1], c= particle_fields[0,:] - optimal_temp, cmap='viridis', s=10, vmin=-1, vmax=1)
+    else:
+        sc = ax.scatter(total_positions[0,:,0], total_positions[0,:,1], c=optimal_temp, cmap='viridis', s=10)
     text = ax.text(s='', x=0.5, y=1.05, ha='center', va='center', transform=ax.transAxes)
     cbar = plt.colorbar(sc)
-    cbar.set_label('T - T$_{opt}$')
-    # every 25th frame for the first 1000 frames, then every 100th frame
-    frames_to_show = np.concatenate([np.arange(0, 1000, 25), np.arange(1000, total_positions.shape[0], 100)])
+    if not Tjit:
+        cbar.set_label('T - T$_{opt}$')
+    else:
+        cbar.set_label('T$_{opt}$')
+    frames_to_show = np.arange(0, total_positions.shape[0], 100)
     ani = FuncAnimation(fig, update, frames=frames_to_show)
-    ani.save('penguin_clusters.gif', writer='pillow', fps=5)
-    plt.show()
+    ani.save(f'{filename}.gif', writer='pillow', fps=5)
+    # plt.show()
+
+def plot_field_time(particle_fields:np.ndarray, optimal_temp:float, filename:str) -> None:
+    fig, ax = plt.subplots()
+    ax.plot(np.mean( np.abs(particle_fields), axis=1) - optimal_temp)
+    ax.set_xlabel('Time')
+    ax.set_ylabel('<|T - T$_{opt}$|>')
+    plt.savefig(f'{filename}.png')
+    plt.clf()
 
 def main():
-    num_steps = 10**4
-    timestep = 1e-4
-    timestep = 5e-4
+    num_steps = 1*10**4
+    timestep = 5e-5
 
-    penguin_sim = PenguinClusters(num_particles=150, num_dim=2, rho=1, optimal_temp=15)
-    total_positions, particle_fields = penguin_sim.run_simulation(num_steps=num_steps, timestep=timestep)
+    # with jitter in the optimal temperature
+    for temperature in [20]:
+        temperature_jit = temperature + np.concatenate([np.ones(100)*0.0, np.ones(50)*0.4])*temperature
+        penguin_sim = PenguinClusters(num_particles=150, num_dim=2, rho=1, optimal_temp=temperature_jit)
+        total_positions, particle_fields = penguin_sim.run_simulation(num_steps=num_steps, timestep=timestep)
+        plot_positions_and_fields(total_positions, particle_fields, penguin_sim.optimal_temp, f'penguin_simulation_{temperature}_jitterT', Tjit=True)
 
-    plot_positions_and_fields(total_positions, particle_fields, penguin_sim.optimal_temp)
+    # just the optimal temperature
+    for temperature in [20]:
+        penguin_sim = PenguinClusters(num_particles=150, num_dim=2, rho=1, optimal_temp=temperature)
+        total_positions, particle_fields = penguin_sim.run_simulation(num_steps=num_steps, timestep=timestep)
+        plot_positions_and_fields(total_positions, particle_fields, penguin_sim.optimal_temp, f'penguin_simulation_{temperature}')
+        plot_field_time(particle_fields, penguin_sim.optimal_temp, f'penguin_field_{temperature}')
 
     #TODO: 
-    # - when is the system in equilibrium? (plot the average particle field over time) from this point we can measure variables??
-    # - initialisation of the positions is random, but would be more useful to already throw in group structure?
+    # - compare properties vs method of initialisation
+    # - is it ok that equilibrium is now done by checking slope flattening (i.e. second derivative)? slope is still always nonzero so couldn't look at flattening of the slope itself(?)
+    # - write results to file so we can do the plots later
 
 if __name__ == '__main__':
     main()
