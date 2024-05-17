@@ -5,6 +5,17 @@ import pickle
 from typing import Union
 import os
 import functools
+import matplotlib as mpl
+
+def set_defaults():
+    ''' Set default values for matplotlib rcParams. '''
+    # set default font size for axis labels
+    mpl.rcParams['axes.labelsize'] = 16
+    mpl.rcParams['xtick.labelsize'] = 12
+    mpl.rcParams['ytick.labelsize'] = 12
+
+    # set default legend font size
+    mpl.rcParams['legend.fontsize'] = 12
 
 def CatchFileNotFoundError(function):
     ''' Catch FileNotFoundError and create the directory if it doesn't exist;
@@ -53,27 +64,29 @@ def plot_positions_and_fields(total_positions:np.ndarray, particle_fields:np.nda
 @CatchFileNotFoundError
 def plot_field_time(particle_fields:np.ndarray, optimal_temp:float, filename:str) -> None:
     fig, ax = plt.subplots()
-    ax.plot(np.mean( np.abs(particle_fields), axis=1) - optimal_temp)
+    ax.plot(np.mean(np.abs(particle_fields - optimal_temp), axis=1))
     ax.set_xlabel('Time')
     ax.set_ylabel('<|T - T$_{opt}$|>')
+    ax.set_yscale('log')
     plt.savefig(f'figures/{filename}.png')
     plt.clf()
 
 def read_from_pickle(filename:str) -> tuple[np.ndarray, np.ndarray, Union[float,np.ndarray], float]:
-    ''' Reads the data from the pickle file given filename, including extension. Returns the positions, particle fields, optimal temperature and density.'''
+    ''' Reads the data from the pickle file given filename, including extension. Returns the positions, particle fields, optimal temperature, density and timestep size.'''
     try:
         simulation_data = pickle.load(open(f'model_output/{filename}', 'rb'))
     except FileNotFoundError:
         raise FileNotFoundError(f'No data found for model_output/{filename}. Run the simulation first.')
-    return simulation_data['positions'], simulation_data['particle_fields'], simulation_data['optimal_temp'], simulation_data['rho']
-
+    return simulation_data['positions'], simulation_data['particle_fields'], simulation_data['optimal_temp'], simulation_data['rho'], simulation_data['timestep']
 
 def main():
-    for filename, Tjit in zip(['test', 'test_jitterT'],[False, True]):
-        total_positions, particle_fields, optimal_temp, rho = read_from_pickle(f'{filename}.p')
-        plot_positions_and_fields(total_positions, particle_fields, optimal_temp, filename, Tjit)
-        if not Tjit:
-            plot_field_time(particle_fields, optimal_temp, filename)
+    set_defaults()
+
+    # for filename, Tjit in zip(['test', 'test_jitterT'],[False, True]):
+    for filename in os.listdir('model_output'):
+        total_positions, particle_fields, optimal_temp, rho, timestep = read_from_pickle(f'{filename}')
+        plot_positions_and_fields(total_positions, particle_fields, optimal_temp, filename[:-2], Tjit=False)
+        plot_field_time(particle_fields, optimal_temp, filename[:-2])
 
 if __name__ == '__main__':
     main()

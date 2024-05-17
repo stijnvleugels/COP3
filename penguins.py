@@ -4,6 +4,7 @@ from matplotlib.animation import FuncAnimation
 from tqdm import tqdm
 import pickle
 import os
+from plots import CatchFileNotFoundError
 
 class PenguinClusters:
 
@@ -124,28 +125,26 @@ class PenguinClusters:
         particle_fields = np.zeros([slope_check_interval])
         old_slope = 0
 
+        print('Equilibrating...')
         for i in range(num_steps):
             pos, particle_field = self.next_timestep(pos, timestep=timestep)
             particle_fields[i % slope_check_interval] = np.mean(particle_field)
             if i % slope_check_interval == 0:
                 new_slope = np.median(np.abs(np.diff(particle_fields)))
                 if np.abs(new_slope - old_slope) < 1e-4 and i > 0:
-                    print(f'Equilibrated at timestep {i}, slope is {new_slope}')
+                    print(f'Equilibrated at timestep {i}')
                     return pos
                 particle_fields = np.zeros([slope_check_interval])
                 old_slope = new_slope
         print('Equilibration not reached, returning last positions')
         return pos
     
-    def write_results_to_file(self, pos:np.ndarray, particle_fields:np.ndarray) -> None:
+    @CatchFileNotFoundError
+    def write_results_to_file(self, pos:np.ndarray, particle_fields:np.ndarray, timestep:float) -> None:
         ''' Write the results to a pickle file. '''
-        if not os.path.exists('model_output'):
-            os.makedirs('model_output')
-
         pickle.dump({'positions':pos, 'particle_fields':particle_fields, 
-                     'optimal_temp':self.optimal_temp, 'rho':self.rho},
+                     'optimal_temp':self.optimal_temp, 'rho':self.rho, 'timestep':timestep},
                     open(f'model_output/{self.results_filename}.p', 'wb'))
-
 
     def run_simulation(self, num_steps:int, timestep:float) -> tuple[np.ndarray, np.ndarray]:
         ''' Run the simulation for a number of steps and return the positions and particle field values at each timestep.
@@ -154,34 +153,37 @@ class PenguinClusters:
         particle_fields = np.zeros([num_steps, self.num_particles])
         positions = np.random.rand(self.num_particles, self.num_dim) * self.boxsize
         # positions = self.init_positions()
-        # positions = self.equilibrate(positions, timestep=timestep)
+        positions = self.equilibrate(positions, timestep=timestep)
 
         for i in tqdm(range(num_steps)):
             positions, particle_field = self.next_timestep(positions, timestep=timestep)
             total_positions[i, :] = positions
             particle_fields[i, :] = particle_field
 
-        self.write_results_to_file(total_positions, particle_fields)
+        self.write_results_to_file(total_positions, particle_fields, timestep)
         return total_positions, particle_fields
 
 def main():
     num_steps = 1*10**4
     timestep = 5e-5
+    num_particles = 256
+    rho = 1
 
     # with jitter in the optimal temperature
-    for temperature in [20]:
-        temperature_jit = temperature + np.concatenate([np.ones(100)*0.0, np.ones(50)*0.4])*temperature
-        penguin_sim = PenguinClusters(num_particles=150, num_dim=2, rho=1, optimal_temp=temperature_jit, results_filename=f'test_jitterT')
-        total_positions, particle_fields = penguin_sim.run_simulation(num_steps=num_steps, timestep=timestep)
+    # for temperature in [20]:
+    #     temperature_jit = temperature + np.concatenate([np.ones(100)*0.0, np.ones(50)*0.4])*temperature
+    #     penguin_sim = PenguinClusters(num_particles=num_particles, num_dim=2, rho=rho, optimal_temp=temperature_jit, results_filename=f'{temperature}_{num_particles}_jitterT')
+    #     total_positions, particle_fields = penguin_sim.run_simulation(num_steps=num_steps, timestep=timestep)
         
     # just the optimal temperature
-    for temperature in [20]:
-        penguin_sim = PenguinClusters(num_particles=150, num_dim=2, rho=1, optimal_temp=temperature, results_filename=f'test')
+    for temperature in [3, 5, 10, 20]:
+        penguin_sim = PenguinClusters(num_particles=num_particles, num_dim=2, rho=rho, optimal_temp=temperature, results_filename=f't{temperature}_d{rho}_n{num_particles}_equi')
         total_positions, particle_fields = penguin_sim.run_simulation(num_steps=num_steps, timestep=timestep)
 
     #TODO: 
     # - compare properties vs method of initialisation
     # - is it ok that equilibrium is now done by checking slope flattening (i.e. second derivative)? slope is still always nonzero so couldn't look at flattening of the slope itself(?)
+    # - files can be easily compressed by just not storing every step, but e.g. only every 100th step
 
 if __name__ == '__main__':
     main()
