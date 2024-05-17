@@ -2,15 +2,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from tqdm import tqdm
+import pickle
+import os
 
 class PenguinClusters:
 
-    def __init__(self, num_particles:int, num_dim:int, rho:float, optimal_temp:float) -> None:
+    def __init__(self, num_particles:int, num_dim:int, rho:float, optimal_temp:float, results_filename:str) -> None:
         self.num_particles = num_particles
         self.num_dim = num_dim
         self.rho = rho
         self.optimal_temp = optimal_temp
         self.boxsize = np.sqrt(num_particles/rho)
+        self.results_filename = results_filename
 
     def init_positions(self) -> np.ndarray:
         ''' Initialize the positions of the particles in the box in four clusters.
@@ -133,6 +136,16 @@ class PenguinClusters:
                 old_slope = new_slope
         print('Equilibration not reached, returning last positions')
         return pos
+    
+    def write_results_to_file(self, pos:np.ndarray, particle_fields:np.ndarray) -> None:
+        ''' Write the results to a pickle file. '''
+        if not os.path.exists('model_output'):
+            os.makedirs('model_output')
+
+        pickle.dump({'positions':pos, 'particle_fields':particle_fields, 
+                     'optimal_temp':self.optimal_temp, 'rho':self.rho},
+                    open(f'model_output/{self.results_filename}.p', 'wb'))
+
 
     def run_simulation(self, num_steps:int, timestep:float) -> tuple[np.ndarray, np.ndarray]:
         ''' Run the simulation for a number of steps and return the positions and particle field values at each timestep.
@@ -148,41 +161,8 @@ class PenguinClusters:
             total_positions[i, :] = positions
             particle_fields[i, :] = particle_field
 
+        self.write_results_to_file(total_positions, particle_fields)
         return total_positions, particle_fields
-    
-    
-def plot_positions_and_fields(total_positions:np.ndarray, particle_fields:np.ndarray, optimal_temp:float, filename:str, Tjit:bool=False) -> None:
-    def update(frame):
-        sc.set_offsets(total_positions[frame,:,0:2])
-        if not Tjit:
-            sc.set_array(particle_fields[frame,:] - optimal_temp)
-        text.set_text(f'Time: {frame}')
-        return sc, text,
-
-    # plot positions as function of time in a video
-    fig, ax = plt.subplots(figsize=(5,5))
-    if not Tjit:
-        sc = ax.scatter(total_positions[0,:,0], total_positions[0,:,1], c= particle_fields[0,:] - optimal_temp, cmap='viridis', s=10, vmin=-1, vmax=1)
-    else:
-        sc = ax.scatter(total_positions[0,:,0], total_positions[0,:,1], c=optimal_temp, cmap='viridis', s=10)
-    text = ax.text(s='', x=0.5, y=1.05, ha='center', va='center', transform=ax.transAxes)
-    cbar = plt.colorbar(sc)
-    if not Tjit:
-        cbar.set_label('T - T$_{opt}$')
-    else:
-        cbar.set_label('T$_{opt}$')
-    frames_to_show = np.arange(0, total_positions.shape[0], 100)
-    ani = FuncAnimation(fig, update, frames=frames_to_show)
-    ani.save(f'{filename}.gif', writer='pillow', fps=5)
-    # plt.show()
-
-def plot_field_time(particle_fields:np.ndarray, optimal_temp:float, filename:str) -> None:
-    fig, ax = plt.subplots()
-    ax.plot(np.mean( np.abs(particle_fields), axis=1) - optimal_temp)
-    ax.set_xlabel('Time')
-    ax.set_ylabel('<|T - T$_{opt}$|>')
-    plt.savefig(f'{filename}.png')
-    plt.clf()
 
 def main():
     num_steps = 1*10**4
@@ -191,21 +171,17 @@ def main():
     # with jitter in the optimal temperature
     for temperature in [20]:
         temperature_jit = temperature + np.concatenate([np.ones(100)*0.0, np.ones(50)*0.4])*temperature
-        penguin_sim = PenguinClusters(num_particles=150, num_dim=2, rho=1, optimal_temp=temperature_jit)
+        penguin_sim = PenguinClusters(num_particles=150, num_dim=2, rho=1, optimal_temp=temperature_jit, results_filename=f'test_jitterT')
         total_positions, particle_fields = penguin_sim.run_simulation(num_steps=num_steps, timestep=timestep)
-        plot_positions_and_fields(total_positions, particle_fields, penguin_sim.optimal_temp, f'penguin_simulation_{temperature}_jitterT', Tjit=True)
-
+        
     # just the optimal temperature
     for temperature in [20]:
-        penguin_sim = PenguinClusters(num_particles=150, num_dim=2, rho=1, optimal_temp=temperature)
+        penguin_sim = PenguinClusters(num_particles=150, num_dim=2, rho=1, optimal_temp=temperature, results_filename=f'test')
         total_positions, particle_fields = penguin_sim.run_simulation(num_steps=num_steps, timestep=timestep)
-        plot_positions_and_fields(total_positions, particle_fields, penguin_sim.optimal_temp, f'penguin_simulation_{temperature}')
-        plot_field_time(particle_fields, penguin_sim.optimal_temp, f'penguin_field_{temperature}')
 
     #TODO: 
     # - compare properties vs method of initialisation
     # - is it ok that equilibrium is now done by checking slope flattening (i.e. second derivative)? slope is still always nonzero so couldn't look at flattening of the slope itself(?)
-    # - write results to file so we can do the plots later
 
 if __name__ == '__main__':
     main()
